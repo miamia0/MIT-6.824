@@ -21,7 +21,7 @@ MIT 6.824 课程的学习资料
 - [Lec6：Raft实现](https://github.com/chaozh/MIT-6.824/issues/10)
 
 ## LAB 进度
-- [ ] Lab 1  
+- [x] Lab 1  
 - [ ] Lab 2
   - [ ] Lab 2A
   - [ ] Lab 2B
