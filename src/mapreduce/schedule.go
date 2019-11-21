@@ -3,6 +3,7 @@ package mapreduce
 import(
 	"fmt"
 	"sync"
+	"time"
 
 )
 
@@ -15,7 +16,7 @@ import(
 // suitable for passing to call(). registerChan will yield all
 // existing registered workers (if any) and new ones as they register.
 //
-func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, registerChan chan string) {
+func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, registerChan 	chan string) {
 	var ntasks int
 	var n_other int // number of inputs (for reduce) or outputs (for map)
 	switch phase {
@@ -33,23 +34,28 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
 
 	for i := 0;i<ntasks;i++{
 	
-		wg.Add(1)
 		var file string 
 		if phase == mapPhase{
 			file = mapFiles[i]
 		}
-		go func(file string,i int,nReduce int){
-			taskArgs :=  DoTaskArgs{jobName,file,phase,i,n_other}
-			srv := <- registerChan
-			err := call(srv, "Worker.DoTask",taskArgs,nil)
-			if err == false{
-				fmt.Println("error call")
-			}			
-			defer func(){
-				wg.Done()
-				registerChan <- srv
-				}()
+		wg.Add(1)
+		go func(file string,taskIndex int,nReduce int){
+			taskArgs :=  DoTaskArgs{jobName,file,phase,taskIndex,n_other}
+			result := false			
+			for result == false{
+				//fmt.Println(taskIndex)
+				srv := <- registerChan
+				result = call(srv, "Worker.DoTask",taskArgs,nil)
+				if result {
+					wg.Done()
+					registerChan<-srv
+					break
+				}else{
+					time.After(time.Second)
+				}
+			}
 		}(file,i,nReduce)
+		
 	}
 	wg.Wait()
 	
