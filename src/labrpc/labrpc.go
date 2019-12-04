@@ -50,14 +50,16 @@ package labrpc
 //   pass svc to srv.AddService()
 //
 
-import "encoding/gob"
-import "bytes"
-import "reflect"
-import "sync"
-import "log"
-import "strings"
-import "math/rand"
-import "time"
+import (
+	"bytes"
+	"encoding/gob"
+	"log"
+	"math/rand"
+	"reflect"
+	"strings"
+	"sync"
+	"time"
+)
 
 type reqMsg struct {
 	endname  interface{} // name of sending ClientEnd
@@ -441,11 +443,11 @@ func (svc *Service) dispatch(methname string, req reqMsg) replyMsg {
 		// call the method.
 		function := method.Func
 		function.Call([]reflect.Value{svc.rcvr, args.Elem(), replyv})
-
 		// encode the reply.
 		rb := new(bytes.Buffer)
 		re := gob.NewEncoder(rb)
 		re.EncodeValue(replyv)
+		//	fmt.Println("called")
 
 		return replyMsg{true, rb.Bytes()}
 	} else {

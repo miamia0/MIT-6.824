@@ -1,13 +1,14 @@
 package main
 
 import (
-	"os"
 	"fmt"
 	"mapreduce"
-	"unicode"
-	"strings"
+	"os"
 	"strconv"
+	"strings"
+	"unicode"
 )
+
 // The mapping function is called once for each piece of the input.
 // In this framework, the key is the name of the file that is being processed,
 // and the value is the file's contents. The return value should be a slice of
@@ -15,20 +16,20 @@ import (
 func mapF(document string, value string) (res []mapreduce.KeyValue) {
 	// TODO: you should complete this to do the inverted index challenge
 	var ret []mapreduce.KeyValue
-	KeyValueMap := make(map[string] int)
-	for  _,words :=  range strings.FieldsFunc(value,func(c rune) bool {
-        if unicode.IsLetter(c) {
-            return false
-        }
+	KeyValueMap := make(map[string]int)
+	for _, words := range strings.FieldsFunc(value, func(c rune) bool {
+		if unicode.IsLetter(c) {
+			return false
+		}
 		return true
-	}){
+	}) {
 		KeyValueMap[words] = 1
 	}
-	for keyName,_ := range KeyValueMap{
-	//	fmt.Println(keyName,value)
-		ret = append(ret,mapreduce.KeyValue{keyName,document})
+	for keyName, _ := range KeyValueMap {
+		//	fmt.Println(keyName,value)
+		ret = append(ret, mapreduce.KeyValue{keyName, document})
 	}
-	
+
 	return ret
 
 }
@@ -38,23 +39,23 @@ func mapF(document string, value string) (res []mapreduce.KeyValue) {
 // should be a single output value for that key.
 func reduceF(key string, values []string) string {
 	// TODO: you should complete this to do the inverted index challenge
-	KeyValueMap := make(map[string] int)
+	KeyValueMap := make(map[string]int)
 
-	var documents []string	
-	for _,name:= range values{
-		if	KeyValueMap[name] !=1{
+	var documents []string
+	for _, name := range values {
+		if KeyValueMap[name] != 1 {
 			KeyValueMap[name] = 1
-			documents = append(documents,name)
+			documents = append(documents, name)
 		}
 	}
 
-	number:= len(documents)
-	str := strconv.Itoa(number)+" "
+	number := len(documents)
+	str := strconv.Itoa(number) + " "
 
-	for i,name:= range documents{
-		if i == number-1{
-			str = str+name
-		}else{
+	for i, name := range documents {
+		if i == number-1 {
+			str = str + name
+		} else {
 			str = str + name + ","
 		}
 	}
