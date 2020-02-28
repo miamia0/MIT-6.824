@@ -362,6 +362,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		index = rf.getLastLogIndex() + 1
 
 		rf.log = append(rf.log, LogMsg{rf.currentTerm, command})
+		if rf.Debug {
+			fmt.Println(rf.me, ":", rf.log)
+		}
 		//rf.lastApplied = rf.lastApplied + 1
 
 	}
@@ -388,7 +391,6 @@ const (
 func (rf *Raft) setFollower() {
 	if rf.Debug {
 		fmt.Println("~~~~~~~~~~~~~~~~~~~~~~~~~~")
-
 		fmt.Println("Follower ", rf.me, " became a Follower! ")
 		fmt.Println("~~~~~~~~~~~~~~~~~~~~~~~~~~")
 
@@ -401,7 +403,6 @@ func (rf *Raft) setCandidate() {
 	rf.Status = CANDIDATE
 	if rf.Debug {
 		fmt.Println("==========================")
-
 		fmt.Println("Candidate ", rf.me, " became a Candidate! ")
 		fmt.Println("==========================")
 
@@ -415,7 +416,6 @@ func (rf *Raft) setLeader() {
 	rf.Status = LEADER
 	if rf.Debug {
 		fmt.Println("&&&&&&&&&&&&&&&&&&&&&&&&")
-
 		fmt.Println("Leader ", rf.me, " became a leader! ")
 		fmt.Println("&&&&&&&&&&&&&&&&&&&&&&&&")
 
@@ -424,45 +424,6 @@ func (rf *Raft) setLeader() {
 		rf.nextIndex[i] = rf.commitedIndex + 1
 		rf.matchIndex[i] = 0
 	}
-}
-func (rf *Raft) Follower() int {
-
-	tickerTime := time.Duration((1 + rand.Float64()*1) * (float64)(time.Second))
-	ticker := time.NewTicker(tickerTime)
-	nxtStatus := CANDIDATE
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	go func(ticker *time.Ticker) {
-		defer func() {
-			ticker.Stop()
-			wg.Add(-1)
-
-		}()
-		for {
-			select {
-			case <-ticker.C:
-				return
-			case stop := <-rf.getAppendEntrieschan:
-				if stop {
-					nxtStatus = FOLLOWER
-					return
-				}
-			case stop := <-rf.getRequestVotechan:
-				if stop {
-					nxtStatus = FOLLOWER
-					return
-				}
-			}
-		}
-	}(ticker)
-	wg.Wait()
-	rf.Status = nxtStatus
-	if rf.Debug && rf.Status != FOLLOWER {
-		fmt.Println(rf.me, "becomd a ", rf.Status)
-	}
-	//得到了vote
-	return nxtStatus
 }
 
 //
@@ -531,166 +492,6 @@ func (rf *Raft) election() {
 	wg.Wait()
 }
 
-//Candidate distruction of candidate
-func (rf *Raft) Candidate() int {
-	nxtStatus := CANDIDATE
-	var wg sync.WaitGroup
-	var timerwg sync.WaitGroup
-
-	CandidateResultChan := make(chan int) // when get a
-	tickerTime := time.Duration((1 + rand.Float64()*1) * (float64)(time.Second))
-	ticker := time.NewTicker(tickerTime)
-	rf.mu.Lock()
-	rf.currentTerm = rf.currentTerm + 1
-	rf.mu.Unlock()
-	if rf.Debug {
-		fmt.Println("================================")
-
-		fmt.Printf("%d become a candidate in Term %d\n", rf.me, rf.currentTerm)
-		fmt.Println("================================")
-
-	}
-	args := RequestVoteArgs{
-		Term:         rf.currentTerm,
-		CandidatedId: rf.me,
-		LastLogIndex: rf.getLastLogIndex(),
-		LastLogTerm:  rf.getLastLogTerm(),
-	}
-	voteGot := 0
-	voteGot++
-
-	var voteGotLock sync.Mutex
-	timerwg.Add(1)
-	electionEnded := false
-
-	go func(ticker *time.Ticker) {
-		defer func() {
-			ticker.Stop()
-			timerwg.Add(-1)
-		}()
-
-		for ; ; time.Sleep(10 * time.Millisecond) {
-
-			select {
-			case <-ticker.C: //overdue
-				{
-					rf.mu.Lock()
-					rf.Status = CANDIDATE
-					rf.mu.Unlock()
-					if rf.Debug {
-						fmt.Printf("Candidate %d up to time to become Candidate\n", rf.me)
-					}
-					electionEnded = true
-					return
-				}
-			case <-rf.getAppendEntrieschan: //now leader with higher term number
-				{
-					if rf.Debug {
-						fmt.Printf("Candidate %d get getAppendEntrieschan\n", rf.me)
-					}
-					electionEnded = true
-					rf.mu.Lock()
-					rf.Status = FOLLOWER
-					rf.mu.Unlock()
-					return
-				}
-
-			case nxtStatus = <-CandidateResultChan:
-				{
-					if rf.Debug {
-						fmt.Printf("Candidate %d get CandidateResultChan %d\n", rf.me, nxtStatus)
-					}
-					electionEnded = true
-
-					rf.mu.Lock()
-					rf.Status = nxtStatus
-					//rf.leaderInit()
-
-					rf.mu.Unlock()
-					return
-				}
-			case <-rf.getRequestVotechan: //ignore
-				{
-
-				}
-			}
-		}
-	}(ticker)
-
-	//RequestVote
-
-	for serverNumber := range rf.peers {
-		if serverNumber != rf.me {
-			wg.Add(1)
-			go func(serverNumber int) {
-				var reply RequestVoteReply
-				defer wg.Add(-1)
-				if rf.Debug {
-					fmt.Printf("Candidate %d send %d vote requests in term %d\n", rf.me, serverNumber, rf.currentTerm)
-				}
-				work := rf.sendRequestVote(serverNumber, &args, &reply) //给所有server发送请求,因为觉得这个来回应该不会比较慢所以不管了
-				if electionEnded {
-					return
-				}
-
-				if work == false {
-					if rf.Debug {
-						fmt.Printf("Candidate %d network err  in send requestsvote to %d\n", rf.me, serverNumber)
-					}
-				} else if reply.VoteGranted {
-					voteGotLock.Lock()
-					if rf.Debug {
-						fmt.Printf("Candidate %d voteGotLock\n", rf.me)
-					}
-					voteGot++
-					if voteGot*2 > len(rf.peers) && electionEnded == false {
-
-						if rf.Debug {
-
-							fmt.Printf("Candidate %d become a leader>>>>>>\n", rf.me)
-						}
-						electionEnded = true
-
-						CandidateResultChan <- LEADER //Win
-
-					}
-					if rf.Debug {
-						fmt.Printf("Candidate %d voteGotLock ended\n", rf.me)
-					}
-					voteGotLock.Unlock()
-
-				} else if reply.Term > rf.currentTerm && electionEnded == false {
-					electionEnded = true //lose
-					rf.currentTerm = reply.Term
-					if rf.Debug {
-						fmt.Printf("Candidate %d server get heigher term from  %d \n", rf.me, serverNumber)
-					}
-					CandidateResultChan <- FOLLOWER
-
-				}
-			}(serverNumber)
-		} else {
-			rf.mu.Lock()
-			rf.votedFor = rf.me
-			rf.mu.Unlock()
-		}
-
-	}
-
-	timerwg.Wait()
-	if rf.Debug {
-		fmt.Println("Candidate ", rf.me, " timer ended")
-	}
-	wg.Wait()
-
-	if rf.Status == LEADER {
-
-		if rf.Debug {
-			fmt.Println("Leader ", rf.me, " inited!")
-		}
-	}
-	return nxtStatus
-}
 func (rf *Raft) getPrelogTerm(serverNumber int) int {
 	if len(rf.log) == 1 {
 		return 0
@@ -754,139 +555,9 @@ func (rf *Raft) heartBeats() {
 			}(serverNumber)
 		}
 	}
-
 	wg.Wait()
 }
 
-func (rf *Raft) Leader() int {
-	var wg sync.WaitGroup
-	var timerwg sync.WaitGroup
-	nxtStatus := LEADER
-	if rf.Debug {
-		fmt.Println("&&&&&&&&&&&&&&&&&&&&&&&&")
-
-		fmt.Println("Leader ", rf.me, " became a leader! ")
-		fmt.Println("&&&&&&&&&&&&&&&&&&&&&&&&")
-
-	}
-	tickerTime := time.Duration(0.5 * (float64)(time.Second))
-	ticker := time.NewTicker(tickerTime)
-	timerwg.Add(1)
-	higherTermchan := make(chan bool)
-	timerEnded := false
-	go func(ticker *time.Ticker) {
-		defer func() {
-			ticker.Stop()
-			timerwg.Add(-1)
-		}()
-
-		for {
-
-			select {
-			case <-ticker.C:
-				{
-					timerEnded = true
-					return
-				}
-
-			case <-higherTermchan:
-				{
-					rf.Status = FOLLOWER
-					//return
-				}
-			case <-rf.getAppendEntrieschan:
-				{
-					rf.Status = FOLLOWER
-					//	return
-				}
-			case <-rf.getRequestVotechan:
-				{
-
-					rf.Status = FOLLOWER
-					//return
-				}
-
-			}
-		}
-	}(ticker)
-
-	//send heartBeats
-	for serverNumber := range rf.peers {
-		//fmt.Printf("%d send  ents %d \n",rf.me,rf.currentTerm)
-		if serverNumber != rf.me {
-			wg.Add(1)
-			go func(serverNumber int) {
-				var reply AppendEntriesReply
-				defer wg.Add(-1)
-
-				args := AppendEntriesArgs{
-					Term:         rf.currentTerm,
-					LeaderId:     rf.me,
-					PrevLogIndex: rf.matchIndex[serverNumber],
-					PreLogTerm:   rf.getPrelogTerm(serverNumber), // rf.log[rf.nextIndex[serverNumber]].Term, //可是觉得和这个没有什么关系啊···==？？？？？
-					Entries:      append([]LogMsg{}, rf.log[Min(len(rf.log), rf.nextIndex[serverNumber]):]...),
-					LeaderCommit: rf.commitedIndex,
-				}
-				//matchIndex
-
-				work := rf.sendAppendEntries(serverNumber, &args, &reply) //给所有server发送请求
-				if rf.Debug {
-					fmt.Printf("Leader %d  send appendentries to %d\n", rf.me, serverNumber)
-				}
-				if work == false {
-					if rf.Debug {
-						fmt.Printf("Leader %d err in send appendentries to %d\n", rf.me, serverNumber)
-					}
-				} else {
-					if reply.Success {
-						rf.matchIndex[serverNumber] = args.PrevLogIndex + len(args.Entries)
-						rf.nextIndex[serverNumber] = rf.matchIndex[serverNumber] + 1 // 更新nextIndex
-						rf.updateCommitIndex()
-					} else {
-						rf.mu.Lock()
-						if rf.Debug {
-							fmt.Println("Leader ", rf.me, " redece ", serverNumber, "[nextInedex]")
-						}
-						rf.nextIndex[serverNumber]--
-						rf.mu.Unlock()
-					}
-				}
-				if work && reply.Term > rf.currentTerm { //higher term
-					if rf.Debug {
-						fmt.Printf("?!Leader : %d next: %d term:%d higher term:%d \n", rf.me, serverNumber, rf.currentTerm, reply.Term)
-					}
-					rf.mu.Lock()
-					rf.currentTerm = reply.Term
-
-					rf.mu.Unlock()
-
-					if rf.Status == LEADER && timerEnded == false {
-						rf.mu.Lock()
-						higherTermchan <- true
-						rf.mu.Unlock()
-					}
-				}
-			}(serverNumber)
-		}
-	}
-
-	timerwg.Wait()
-	if rf.Debug {
-		fmt.Println("Leader", rf.me, " one leader circle ended ! ")
-	}
-	wg.Wait()
-	rf.updateAppliedIndex()
-	if rf.Debug && rf.Status != LEADER {
-		fmt.Println("~~~~~~~~~~~~~~~~~~~~~~~~")
-		fmt.Println("Leader", rf.me, " oooooout of leader! ")
-		fmt.Println("~~~~~~~~~~~~~~~~~~~~~~~~")
-
-	}
-	return nxtStatus
-
-	//discover higher term
-
-}
 func (rf *Raft) startServer() { //处理状态问题,
 	heartbeatTimer := time.Duration(300) * time.Millisecond
 
@@ -916,30 +587,12 @@ func (rf *Raft) startServer() { //处理状态问题,
 			case LEADER:
 				{
 					rf.heartBeats()
-					select {
-					case <-rf.getRequestVotechan:
-						rf.setFollower()
-					case <-time.After(heartbeatTimer):
-					}
+					time.Sleep(heartbeatTimer)
 				}
 			}
 		}
 	}()
-	/*
-		//	higherTermchan := make(chan bool)
-		for { //切换状态后才算一次执行结束。
-			//			fmt.Printf("server started %d status %d\n", rf.me, rf.Status)
-			//切换状态
-			switch rf.Status {
-			case FOLLOWER:
-				rf.Follower()
-			case CANDIDATE:
-				rf.Candidate()
-			case LEADER:
-				rf.Leader()
-			}
-		}
-	*/
+
 }
 
 //log的id 从0开始
@@ -952,7 +605,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (2A, 2B, 2C).
 	rf.applyCh = applyCh
-	rf.Debug = false
+	rf.Debug = true
 	if rf.Debug {
 		fmt.Printf("init server -----%d \n", rf.me)
 	}

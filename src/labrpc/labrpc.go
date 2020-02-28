@@ -99,9 +99,12 @@ func (e *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bo
 	rep := <-req.replyCh
 	if rep.ok {
 		rb := bytes.NewBuffer(rep.reply)
+
 		rd := gob.NewDecoder(rb)
+
 		if err := rd.Decode(reply); err != nil {
 			log.Fatalf("ClientEnd.Call(): decode reply: %v\n", err)
+
 		}
 		return true
 	} else {
@@ -239,16 +242,20 @@ func (rn *Network) ProcessReq(req reqMsg) {
 		if replyOK == false || serverDead == true {
 			// server was killed while we were waiting; return error.
 			req.replyCh <- replyMsg{false, nil}
+
 		} else if reliable == false && (rand.Int()%1000) < 100 {
 			// drop the reply, return as if timeout
 			req.replyCh <- replyMsg{false, nil}
+
 		} else if longreordering == true && rand.Intn(900) < 600 {
 			// delay the response for a while
 			ms := 200 + rand.Intn(1+rand.Intn(2000))
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 			req.replyCh <- reply
+
 		} else {
 			req.replyCh <- reply
+			
 		}
 	} else {
 		// simulate no reply and eventual timeout.
@@ -264,6 +271,7 @@ func (rn *Network) ProcessReq(req reqMsg) {
 		}
 		time.Sleep(time.Duration(ms) * time.Millisecond)
 		req.replyCh <- replyMsg{false, nil}
+
 	}
 
 }
@@ -366,7 +374,8 @@ func (rs *Server) dispatch(req reqMsg) replyMsg {
 	rs.mu.Unlock()
 
 	if ok {
-		return service.dispatch(methodName, req)
+		x:=service.dispatch(methodName, req)
+		return x
 	} else {
 		choices := []string{}
 		for k, _ := range rs.services {
@@ -374,6 +383,7 @@ func (rs *Server) dispatch(req reqMsg) replyMsg {
 		}
 		log.Fatalf("labrpc.Server.dispatch(): unknown service %v in %v.%v; expecting one of %v\n",
 			serviceName, serviceName, methodName, choices)
+
 		return replyMsg{false, nil}
 	}
 }
@@ -430,7 +440,7 @@ func (svc *Service) dispatch(methname string, req reqMsg) replyMsg {
 		// the Value's type will be a pointer to req.argsType.
 		args := reflect.New(req.argsType)
 
-		// decode the argument.
+		// decode the argument.nm, jkn,jk
 		ab := bytes.NewBuffer(req.args)
 		ad := gob.NewDecoder(ab)
 		ad.Decode(args.Interface())
@@ -438,16 +448,20 @@ func (svc *Service) dispatch(methname string, req reqMsg) replyMsg {
 		// allocate space for the reply.
 		replyType := method.Type.In(2)
 		replyType = replyType.Elem()
+
 		replyv := reflect.New(replyType)
 
 		// call the method.
 		function := method.Func
+
 		function.Call([]reflect.Value{svc.rcvr, args.Elem(), replyv})
+
 		// encode the reply.
 		rb := new(bytes.Buffer)
+
 		re := gob.NewEncoder(rb)
+
 		re.EncodeValue(replyv)
-		//	fmt.Println("called")
 
 		return replyMsg{true, rb.Bytes()}
 	} else {
