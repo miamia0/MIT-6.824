@@ -23,8 +23,8 @@ MIT 6.824 课程的学习资料
 ## LAB 进度
 - [x] Lab 1  
 - [ ] Lab 2
-  - [ ] Lab 2A
-  - [ ] Lab 2B
+  - [x] Lab 2A
+  - [x] Lab 2B
   - [ ] Lab 2C
 - [ ] Lab 3
   - [ ] Lab 3A
