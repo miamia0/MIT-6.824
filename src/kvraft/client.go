@@ -49,14 +49,12 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 //
 func (ck *Clerk) Get(key string) string {
 
-	ck.mu.Lock()
 	seq := atomic.AddInt64(&ck.seq, 1)
 	args := GetArgs{
 		Key:  key,
 		Ckid: ck.ckid,
 		Seq:  seq,
 	}
-	ck.mu.Unlock()
 
 	for serverID := ck.lastLeader; ; serverID = (serverID + 1) % len(ck.servers) {
 
