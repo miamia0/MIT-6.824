@@ -172,6 +172,7 @@ func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
 	// Your code here.
 	originOp := Op{Type: "Join", Ckid: args.Ckid, Seq: args.Seq, Args: *args}
 	reply.WrongLeader = true
+
 	op, success := sm.syncWithRaft(originOp)
 	if success && equalOp(originOp, op) {
 		reply.WrongLeader = false
@@ -196,6 +197,7 @@ func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
 
 func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
 	// Your code here.
+
 	originOp := Op{Type: "Move", Ckid: args.Ckid, Seq: args.Seq, Args: *args}
 	reply.WrongLeader = true
 	op, success := sm.syncWithRaft(originOp)
@@ -213,7 +215,6 @@ func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
 	op, success := sm.syncWithRaft(originOp)
 	if success && equalOp(originOp, op) {
 		reply.WrongLeader = false
-
 		if args.Num >= 0 && args.Num < len(sm.configs) {
 			reply.Config = sm.configs[args.Num]
 		} else {
@@ -320,7 +321,9 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 			op := apply.Command.(Op)
 			if maxSeq, success := sm.cidSeq[op.Ckid]; !success || op.Seq > maxSeq {
 				sm.cidSeq[op.Ckid] = op.Seq
-				sm.excuteOp(op)
+				if op.Type != "Query" {
+					sm.excuteOp(op)
+				}
 			}
 			sm.unLockIndex(apply.Index, op)
 

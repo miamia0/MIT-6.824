@@ -151,7 +151,7 @@ func (kv *RaftKV) Kill() {
 	// Your code here, if desired.
 }
 func (kv *RaftKV) checkNeedSnapShot() bool {
-	if kv.maxraftstate-kv.maxraftstate/10 < kv.persister.RaftStateSize() {
+	if kv.maxraftstate < kv.persister.RaftStateSize() {
 		return true
 	}
 	return false
@@ -162,14 +162,12 @@ func (kv *RaftKV) saveNewSnapShot(index int) bool {
 	e := gob.NewEncoder(w)
 	e.Encode(kv.db)
 	e.Encode(kv.cidSeq)
-	e.Encode(index)
-	term := kv.rf.GetTermFromIndex(index)
+
 	if kv.Debug {
-		fmt.Println(kv.me, " server saveNewSnapShot for index ", index, "term", term)
+		fmt.Println(kv.me, " server saveNewSnapShot for index ", index)
 	}
-	e.Encode(term)
 	data := w.Bytes()
-	kv.rf.SaveNewSnapShotRaft(index, term, data)
+	kv.rf.SaveNewSnapShotRaft(index, data)
 
 	return false
 }
@@ -182,9 +180,6 @@ func (kv *RaftKV) readPersist(data []byte) {
 	kv.mu.Lock()
 	d.Decode(&kv.db)
 	d.Decode(&kv.cidSeq)
-
-	d.Decode(&kv.rf.LastIncludedIndex)
-	d.Decode(&kv.rf.LastIncludedTerm)
 
 	kv.mu.Unlock()
 }
