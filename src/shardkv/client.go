@@ -8,11 +8,14 @@ package shardkv
 // talks to the group that holds the key's shard.
 //
 
-import "labrpc"
-import "crypto/rand"
-import "math/big"
-import "shardmaster"
-import "time"
+import (
+	"crypto/rand"
+	"labrpc"
+	"math/big"
+	"shardmaster"
+	"sync/atomic"
+	"time"
+)
 
 //
 // which shard is a key in?
@@ -39,7 +42,10 @@ type Clerk struct {
 	sm       *shardmaster.Clerk
 	config   shardmaster.Config
 	make_end func(string) *labrpc.ClientEnd
+
 	// You will have to modify this struct.
+	ckid int64
+	seq  int64
 }
 
 //
@@ -55,6 +61,8 @@ func MakeClerk(masters []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	ck := new(Clerk)
 	ck.sm = shardmaster.MakeClerk(masters)
 	ck.make_end = make_end
+	ck.ckid = nrand()
+	ck.seq = 0
 	// You'll have to add code here.
 	return ck
 }
@@ -68,10 +76,12 @@ func MakeClerk(masters []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 func (ck *Clerk) Get(key string) string {
 	args := GetArgs{}
 	args.Key = key
-
+	args.Ckid = ck.ckid
+	args.Seq = atomic.AddInt64(&ck.seq, 1)
 	for {
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
+		args.Shard = shard
 		if servers, ok := ck.config.Groups[gid]; ok {
 			// try each server for the shard.
 			for si := 0; si < len(servers); si++ {
@@ -88,6 +98,8 @@ func (ck *Clerk) Get(key string) string {
 		}
 		time.Sleep(100 * time.Millisecond)
 		// ask master for the latest configuration.
+		//	args.Seq = atomic.AddInt64(&ck.seq, 1)
+
 		ck.config = ck.sm.Query(-1)
 	}
 
@@ -103,11 +115,14 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args.Key = key
 	args.Value = value
 	args.Op = op
-
-
+	seq := atomic.AddInt64(&ck.seq, 1)
+	args.Ckid = ck.ckid
+	args.Seq = seq
 	for {
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
+		args.Shard = shard
+
 		if servers, ok := ck.config.Groups[gid]; ok {
 			for si := 0; si < len(servers); si++ {
 				srv := ck.make_end(servers[si])
@@ -122,6 +137,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
+		//	args.Seq = atomic.AddInt64(&ck.seq, 1)
 		// ask master for the latest configuration.
 		ck.config = ck.sm.Query(-1)
 	}

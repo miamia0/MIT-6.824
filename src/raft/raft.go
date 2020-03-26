@@ -297,10 +297,6 @@ func (rf *Raft) getLastLogIndex() int {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-	if rf.Debug {
-
-		fmt.Println(rf.me, "get RequestVote from ", args.CandidatedId)
-	}
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -393,9 +389,7 @@ func (rf *Raft) checkPrevLog(term int, index int) bool {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if rf.Debug {
-		fmt.Println(rf.me, "get AppendEntries from ", args.LeaderId, " term is ", args.Term, "commited is ", rf.commitedIndex)
-	}
+
 	reply.Term = rf.currentTerm
 	if args.Term < rf.currentTerm { //|| rf.commitedIndex >= args.PrevLogIndex+len(args.Entries) {
 		reply.Success = false
@@ -463,7 +457,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = true
 		reply.Term = rf.currentTerm
 		rf.getAppendEntrieschan <- true
-
+		if rf.Debug {
+			fmt.Println(rf.me, "get AppendEntries from ", args.LeaderId, " term is ", args.Term, "commited is ", rf.commitedIndex)
+		}
 		if len(args.Entries) != 0 && rf.Debug {
 
 			fmt.Println(rf.me, "logs: ", rf.debugLog, "get from ", args.LeaderId, " term is ", args.Term, "commited is ", rf.commitedIndex)
@@ -540,12 +536,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		index = rf.getLastLogIndex() + 1
 		rf.log = append(rf.log, LogMsg{rf.currentTerm, command})
 		rf.persist()
-		value, ok := command.(int)
-		if ok {
-			rf.debugLog = append(rf.debugLog, LogMsg{rf.currentTerm, value % 1000})
-		}
 		if rf.Debug {
-			//fmt.Println("Leader ", rf.me, "get new log :", rf.log)
+			fmt.Println("Leader ", rf.me, "get new log :", command)
 		}
 	}
 	return index, term, isLeader
