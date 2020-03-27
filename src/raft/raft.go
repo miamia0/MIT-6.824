@@ -130,10 +130,12 @@ func (rf *Raft) persist() {
 func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
+
 	}
+	rf.mu.Lock()
+
 	r := bytes.NewBuffer(data)
 	d := gob.NewDecoder(r)
-	rf.mu.Lock()
 	d.Decode(&rf.currentTerm)
 	d.Decode(&rf.votedFor)
 	d.Decode(&rf.log)
@@ -152,8 +154,10 @@ func (rf *Raft) SaveNewSnapShotRaft(index int, data []byte) {
 
 	rf.LastIncludedIndex = index
 	rf.LastIncludedTerm = rf.GetTermFromIndex(index)
+	//rf.mu.Lock()
 
 	rf.persist()
+	//rf.mu.Unlock()
 	rf.persister.SaveSnapshot(data)
 }
 
@@ -892,9 +896,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.electionEnd = make(chan bool)
 	rf.getAppendEntrieschan = make(chan bool)
 	rf.getRequestVotechan = make(chan bool)
+	rf.readPersist(persister.ReadRaftState())
+
 	go rf.startServer()
 	// initialize from state persisted before a crash
-	rf.readPersist(persister.ReadRaftState())
 
 	return rf
 }

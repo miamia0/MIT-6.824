@@ -17,15 +17,16 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	Type      string
-	Key       string
-	Err       Err
-	Value     string
-	Ckid      int64
-	Seq       int64
-	Shard     int
-	ConfigNum int
-	Config    shardmaster.Config
+	Type        string
+	Key         string
+	Err         Err
+	Value       string
+	Ckid        int64
+	Seq         int64
+	Shard       int
+	ConfigNum   int
+	Config      shardmaster.Config
+	CkConfigNum int
 
 	Data     map[string]string
 	CKid2Seq map[int64]int64
@@ -47,24 +48,22 @@ type ShardKV struct {
 	chWaitMap map[int]chan bool
 	cidSeq    map[int64]int64
 
-	Ckid          int64
-	seq           int64
-	mck           *shardmaster.Clerk
-	config        shardmaster.Config
-	mediateConfig shardmaster.Config
-	persister     *raft.Persister
+	Ckid      int64
+	seq       int64
+	mck       *shardmaster.Clerk
+	config    shardmaster.Config
+	persister *raft.Persister
 	// Your definitions here.
-	needSendShardConfig   map[int]int
-	installShardconfigNum map[int]map[int]bool              //sid_configNum
+	configNumDeleteShard  map[int][]int                     //configNum_sidlist
 	dbInstallShard        map[int]map[int]map[string]string //sid_k_v
-	historyConfig         map[int]shardmaster.Config
-	isVailedShard         map[int]bool
-	wantShardConfig       map[int]int
-	configNumDeleteShard  map[int][]int //configNum_sidlist
-	configNumMatchCount   map[int]int
-	groupUpdatedConfig    map[int]int
+	installShardconfigNum map[int]map[int]bool              //sid_configNum
 
-	Debug bool
+	isVailedShard       map[int]bool
+	wantShardConfig     map[int]int
+	needSendShardConfig map[int]int
+	historyConfig       map[int]shardmaster.Config
+	Ldebug              bool
+	Debug               bool
 }
 
 func (kv *ShardKV) checkNeedSnapShot() bool {
@@ -75,10 +74,13 @@ func (kv *ShardKV) checkNeedSnapShot() bool {
 }
 
 func (kv *ShardKV) saveNewSnapShot(index int) bool {
+
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
 	w := new(bytes.Buffer)
 	e := gob.NewEncoder(w)
 
-	kv.mu.Lock()
 	e.Encode(kv.Ckid)
 	e.Encode(kv.seq)
 	e.Encode(kv.db)
@@ -90,11 +92,8 @@ func (kv *ShardKV) saveNewSnapShot(index int) bool {
 	e.Encode(kv.isVailedShard)
 	e.Encode(kv.wantShardConfig)
 	e.Encode(kv.needSendShardConfig)
+	e.Encode(kv.historyConfig)
 
-	kv.mu.Unlock()
-	if kv.Debug {
-		fmt.Println(kv.me, " server saveNewSnapShot for index ", index)
-	}
 	data := w.Bytes()
 	kv.rf.SaveNewSnapShotRaft(index, data)
 
@@ -104,9 +103,11 @@ func (kv *ShardKV) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
 	r := bytes.NewBuffer(data)
 	d := gob.NewDecoder(r)
-	kv.mu.Lock()
 	d.Decode(&kv.Ckid)
 	d.Decode(&kv.seq)
 	d.Decode(&kv.db)
@@ -120,12 +121,15 @@ func (kv *ShardKV) readPersist(data []byte) {
 	d.Decode(&kv.wantShardConfig)
 
 	d.Decode(&kv.needSendShardConfig)
-	kv.mu.Unlock()
+
+	d.Decode(&kv.historyConfig)
 
 }
 
 func (kv *ShardKV) getLock(index int) chan Op {
 	//	fmt.Println("getLock lock mu")
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
 	if _, success := kv.chMap[index]; success == false {
 		kv.chMap[index] = make(chan Op, 1)
 	}
@@ -135,6 +139,8 @@ func (kv *ShardKV) getLock(index int) chan Op {
 }
 func (kv *ShardKV) getWaitLock(index int) chan bool {
 	//	fmt.Println("getLock lock mu")
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
 	if _, success := kv.chWaitMap[index]; success == false {
 		kv.chWaitMap[index] = make(chan bool, 1)
 	}
@@ -164,8 +170,11 @@ func (kv *ShardKV) lockIndex(logIndex int) Op {
 	select {
 	case op := <-ch:
 		return op
-	case <-time.After(time.Second):
+	case <-time.After(time.Second * 10):
 		<-kv.getWaitLock(logIndex)
+		if kv.Debug {
+			fmt.Println(kv.gid, kv.me, "index", logIndex, "outof Date")
+		}
 		return Op{}
 	}
 }
@@ -185,11 +194,12 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	}
 	// Your code here.
 	originOp := Op{
-		Type:  "Get",
-		Key:   args.Key,
-		Ckid:  args.Ckid,
-		Seq:   args.Seq,
-		Shard: args.Shard,
+		Type:        "Get",
+		Key:         args.Key,
+		Ckid:        args.Ckid,
+		Seq:         args.Seq,
+		Shard:       args.Shard,
+		CkConfigNum: args.CkConfigNum,
 	}
 	//sid := args.Shard
 	if kv.Debug {
@@ -201,6 +211,7 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 		return
 	}
 	op := kv.lockIndex(logIndex)
+	kv.mu.Lock()
 
 	if equalOp(originOp, op) {
 		if kv.Debug {
@@ -209,9 +220,15 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 		}
 		reply.WrongLeader = false
 		reply.Value = op.Value
+		if op.Err == OK {
+			kv.cidSeq[op.Ckid] = op.Seq
+		} else if op.Err == "seq" {
+			op.Err = OK
+		}
 		reply.Err = op.Err
-		return
 	}
+	kv.mu.Unlock()
+
 }
 
 //PutAppend RPC
@@ -223,11 +240,12 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 	originOp := Op{Type: args.Op,
-		Key:   args.Key,
-		Value: args.Value,
-		Ckid:  args.Ckid,
-		Seq:   args.Seq,
-		Shard: args.Shard,
+		Key:         args.Key,
+		Value:       args.Value,
+		Ckid:        args.Ckid,
+		Seq:         args.Seq,
+		Shard:       args.Shard,
+		CkConfigNum: args.CkConfigNum,
 	}
 	if kv.Debug {
 		fmt.Println("gid,", kv.gid, kv.me, "recive  a PutAppend RPC", args)
@@ -238,15 +256,22 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 	op := kv.lockIndex(logIndex)
+	kv.mu.Lock()
 
 	if equalOp(originOp, op) {
 		if kv.Debug {
 			fmt.Println("gid,", kv.gid, kv.me, "ended a PutAppend RPC", args, "op.Err", op, "originOp", originOp)
 		}
+		if op.Err == OK {
+			kv.cidSeq[op.Ckid] = op.Seq
+		} else if op.Err == "seq" {
+			op.Err = OK
+		}
 		reply.WrongLeader = false
 		reply.Err = op.Err
-		return
 	}
+	kv.mu.Unlock()
+
 }
 
 //
@@ -266,6 +291,7 @@ type InstallShardArgs struct {
 	Seq       int64
 }
 type InstallShardReply struct {
+	CKid2Seq    map[int64]int64
 	WrongLeader bool
 	Success     bool
 }
@@ -321,6 +347,7 @@ func (kv *ShardKV) InstallShard(args *InstallShardArgs, reply *InstallShardReply
 		if kv.Debug {
 			fmt.Println("gid,", kv.gid, kv.me, "excute  a installShard RPC", args, "success")
 		}
+		reply.CKid2Seq = op.CKid2Seq
 		reply.WrongLeader = false
 		return
 	}
@@ -397,10 +424,12 @@ func (kv *ShardKV) sendShardToGroup(servers []string, args *InstallShardArgs) {
 
 	index := 0
 	serverLen := len(servers)
+
 	for {
 		reply := InstallShardReply{}
 		success := kv.sendInstallShard(servers[index], args, &reply)
 		if success && !reply.WrongLeader {
+			//		kv.UpdateCidSeq(reply.CKid2Seq)
 			return
 		}
 		index = (index + 1) % serverLen
@@ -430,7 +459,26 @@ func (kv *ShardKV) updateConfigShard(newConfig shardmaster.Config) {
 	}
 	return
 }
-
+func (kv *ShardKV) UpdateCidSeq(CKid2Seq map[int64]int64) {
+	_, isLeader := kv.rf.GetState()
+	if !isLeader {
+		return
+	}
+	originOp := Op{
+		Type:     "UpdateCidSeq",
+		Ckid:     kv.Ckid,
+		Seq:      atomic.AddInt64(&kv.seq, 1),
+		CKid2Seq: CKid2Seq,
+	}
+	logIndex, _, isLeader := kv.rf.Start(originOp)
+	if !isLeader {
+		return
+	}
+	op := kv.lockIndex(logIndex)
+	if equalOp(originOp, op) {
+		return
+	}
+}
 func (kv *ShardKV) NewConfig(Config shardmaster.Config) {
 	_, isLeader := kv.rf.GetState()
 	if !isLeader {
@@ -472,7 +520,7 @@ func (kv *ShardKV) excuteNewConfig(op Op) {
 				kv.db[Sid] = make(map[string]string)
 				kv.isVailedShard[Sid] = true
 			} else if _, success := kv.dbInstallShard[newConfig.Num][Sid]; success {
-				kv.db[Sid] = kv.dbInstallShard[newConfig.Num][Sid]
+				kv.db[Sid] = DeepCopyShardMap(kv.dbInstallShard[newConfig.Num][Sid])
 				//kv.dbInstallShard[newConfig.Num][Sid] = make(map[string]string)
 				kv.isVailedShard[Sid] = true
 			} else {
@@ -483,8 +531,9 @@ func (kv *ShardKV) excuteNewConfig(op Op) {
 
 			if kv.isVailedShard[Sid] == true {
 				servers := newConfig.Groups[Gid]
+
 				args := &InstallShardArgs{
-					Data:      kv.db[Sid],
+					Data:      DeepCopyShardMap(kv.db[Sid]),
 					CKid2Seq:  kv.cidSeq,
 					Shard:     Sid,
 					Config:    newConfig,
@@ -520,6 +569,12 @@ func (kv *ShardKV) excuteNewConfig(op Op) {
 		fmt.Println("==========================")
 	}
 }
+func (kv *ShardKV) excuteUpdateCidSeq(op Op) {
+	ckid2eq := op.CKid2Seq
+	for ckid, seq := range ckid2eq {
+		kv.cidSeq[ckid] = Max(kv.cidSeq[ckid], seq)
+	}
+}
 func (kv *ShardKV) excuteDeleteShard(op Op) {
 	if op.ConfigNum < kv.config.Num {
 		return
@@ -539,12 +594,24 @@ func Max(a, b int64) int64 {
 	}
 	return b
 }
+func DeepCopyShardMap(shardMap map[string]string) map[string]string {
+	newMap := make(map[string]string)
+
+	for k, v := range shardMap {
+		newMap[k] = v
+	}
+
+	return newMap
+}
 func (kv *ShardKV) excuteInstallShard(op Op) {
 
 	sid := op.Shard
 	configNum := op.ConfigNum
 	ckid2eq := op.CKid2Seq
 	data := op.Data
+	for ckid, seq := range ckid2eq {
+		kv.cidSeq[ckid] = Max(kv.cidSeq[ckid], seq)
+	}
 	if op.ConfigNum < kv.wantShardConfig[sid] {
 		if kv.Debug {
 			fmt.Println("..............")
@@ -559,8 +626,11 @@ func (kv *ShardKV) excuteInstallShard(op Op) {
 		needSendConfig := kv.historyConfig[needSendConfigNum]
 		gid := needSendConfig.Shards[sid]
 		servers := needSendConfig.Groups[gid]
+		if len(servers) == 0 {
+			fmt.Println("needSendConfig", needSendConfig)
+		}
 		args := &InstallShardArgs{
-			Data:      data,
+			Data:      DeepCopyShardMap(data),
 			CKid2Seq:  kv.cidSeq,
 			Shard:     sid,
 			Config:    needSendConfig,
@@ -571,12 +641,11 @@ func (kv *ShardKV) excuteInstallShard(op Op) {
 		kv.needSendShardConfig[configNum] = 0
 		go kv.sendShardToGroup(servers, args)
 	}
-	for ckid, seq := range ckid2eq {
-		kv.cidSeq[ckid] = Max(kv.cidSeq[ckid], seq)
-	}
+
 	if configNum == kv.wantShardConfig[sid] && kv.isVailedShard[sid] == false {
 		if kv.config.Shards[sid] == kv.gid {
-			kv.db[sid] = data
+			kv.db[sid] = DeepCopyShardMap(data)
+
 			kv.isVailedShard[sid] = true
 		} else {
 
@@ -585,11 +654,13 @@ func (kv *ShardKV) excuteInstallShard(op Op) {
 		if _, success := kv.dbInstallShard[configNum]; !success {
 			kv.dbInstallShard[configNum] = make(map[int]map[string]string)
 		}
-		kv.dbInstallShard[configNum][sid] = data
+		kv.dbInstallShard[configNum][sid] = DeepCopyShardMap(data)
 	}
 	if kv.Debug {
 		fmt.Println("==========================")
 		fmt.Println(kv.gid, kv.me, "excuteInstallShard", "sid:", sid, "configNum:", configNum)
+		fmt.Println("new ck2seq:", kv.cidSeq)
+
 		fmt.Println("==========================")
 	}
 }
@@ -657,11 +728,18 @@ func (kv *ShardKV) excuteApply() {
 			continue
 		}
 		op := apply.Command.(Op)
-		if kv.Debug {
+
+		if kv.Debug || kv.Ldebug { //kv.gid == 102 && kv.me == 0 {
 			fmt.Println("-------------------------------=")
 			fmt.Println("excute,", op.Type, "shard", op.Shard, "key", op.Key, "value", op.Value, "configNum", op.ConfigNum)
+			fmt.Println("index is", apply.Index)
 			fmt.Println("ck,seq,", op.Ckid, op.Seq)
 			fmt.Println("now config is", kv.config)
+			fmt.Println("now ckconfig is", op.CkConfigNum)
+			fmt.Println("ckidseq now is", kv.cidSeq)
+			fmt.Println("op.ck2seq", op.CKid2Seq)
+			fmt.Println("status ck2seq", op.CKid2Seq[op.Ckid])
+
 			fmt.Println("now db is", kv.db)
 			fmt.Println("now vaild", kv.isVailedShard)
 
@@ -670,14 +748,26 @@ func (kv *ShardKV) excuteApply() {
 		}
 		kv.mu.Lock()
 		if kv.Debug {
+
 			fmt.Println(op.Seq, "get mu lock")
 		}
-		if kv.isVailedShard[op.Shard] == false && (op.Type == "Put" || op.Type == "Append" || op.Type == "Get") {
+
+		if (kv.isVailedShard[op.Shard] == false || kv.config.Num != op.CkConfigNum) && (op.Type == "Put" || op.Type == "Append" || op.Type == "Get") {
 			op.Err = ErrWrongGroup
+			if kv.Debug || kv.Ldebug {
+
+				fmt.Println("ck,seq,", op.Ckid, op.Seq)
+				fmt.Println("ErrWrongGroup ")
+			}
 			//	kv.unLockIndex(apply.Index, op)
 		} else if op.Type == "Get" {
 			op.Value = kv.db[op.Shard][op.Key]
 			op.Err = OK
+			if kv.Debug || kv.Ldebug {
+
+				fmt.Println("ck,seq,", op.Ckid, op.Seq)
+				fmt.Println("exc suceessed ")
+			}
 			//	kv.unLockIndex(apply.Index, op)
 		} else if maxSeq, success := kv.cidSeq[op.Ckid]; (!success || op.Seq > maxSeq) && (op.Type == "Put" || op.Type == "Append") {
 			switch op.Type {
@@ -691,15 +781,20 @@ func (kv *ShardKV) excuteApply() {
 				}
 			}
 			op.Err = OK
+			if kv.Debug || kv.Ldebug {
 
+				fmt.Println("ck,seq,", op.Ckid, op.Seq)
+				fmt.Println("exc suceessed ")
+			}
 			//	if kv.unLockIndex(apply.Index, op) == true {
-			kv.cidSeq[op.Ckid] = op.Seq
+			//	kv.cidSeq[op.Ckid] = op.Seq
 			//}
-		} else if op.Type == "InstallShard" || op.Type == "DeleteShard" || op.Type == "NewConfig" {
+		} else if op.Type == "InstallShard" || op.Type == "DeleteShard" || op.Type == "NewConfig" || op.Type == "UpdateCidSeq" {
 			switch op.Type {
 			case "InstallShard":
 				{
 					kv.excuteInstallShard(op)
+					op.CKid2Seq = kv.cidSeq
 				}
 			case "DeleteShard":
 				{
@@ -709,15 +804,26 @@ func (kv *ShardKV) excuteApply() {
 				{
 					kv.excuteNewConfig(op)
 				}
+			case "UpdateCidSeq":
+				{
+
+					kv.excuteUpdateCidSeq(op)
+
+				}
 			}
 			op.Err = OK
-			//	kv.unLockIndex(apply.Index, op)
+			if kv.Debug || kv.Ldebug {
+				fmt.Println("ck,seq,", op.Ckid, op.Seq)
+				fmt.Println("exc suceessed ")
+			}
+
 		} else {
-			if kv.Debug {
+			if kv.Debug || kv.Ldebug {
+
+				fmt.Println("ck,seq,", op.Ckid, op.Seq)
 				fmt.Println("err in seq", kv.cidSeq[op.Ckid])
 			}
 			op.Err = "seq"
-			//	kv.unLockIndex(apply.Index, op)
 		}
 		kv.mu.Unlock()
 		kv.unLockIndex(apply.Index, op)
@@ -725,7 +831,6 @@ func (kv *ShardKV) excuteApply() {
 			kv.saveNewSnapShot(apply.Index)
 		}
 		if kv.Debug {
-
 			fmt.Println(op.Seq, "release mu lock")
 		}
 	}
@@ -750,6 +855,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.config.Groups = make(map[int][]string)
+	//	kv.config = kv.mck.Query(kv.config.Num + 1)
+	//	kv.updateConfigShard(kv.config)
 
 	kv.persister = persister
 	kv.db = make(map[int]map[string]string)
@@ -767,6 +874,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.needSendShardConfig = make(map[int]int)
 	kv.historyConfig = make(map[int]shardmaster.Config)
 	kv.Debug = false
+	kv.Ldebug = false
 	kv.rf.Debug = false
 
 	kv.readPersist(persister.ReadSnapshot())
