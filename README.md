@@ -20,18 +20,21 @@ MIT 6.824 课程的学习资料
 - [Lec 5：Raft基本](https://github.com/chaozh/MIT-6.824/issues/9)
 - [Lec6：Raft实现](https://github.com/chaozh/MIT-6.824/issues/10)
 
+## 心得体会/LAB记录
+https://github.com/miamia0/LearningRecord/blob/master/MIT6.824/LAB/Readme.md
+欢迎讨论
 ## LAB 进度
 - [x] Lab 1  
 - [x] Lab 2
   - [x] Lab 2A
   - [x] Lab 2B
   - [x] Lab 2C
-- [ ] Lab 3
+- [x] Lab 3
   - [x] Lab 3A
-  - [ ] Lab 3B
-- [ ] Lab 4
-  - [ ] Lab 4A
-  - [ ] Lab 4B
+  - [x] Lab 3B
+- [x] Lab 4
+  - [x] Lab 4A
+  - [x] Lab 4B
   
 ## 问题 Questions
 
