@@ -1,5 +1,7 @@
 package shardkv
 
+import "shardmaster"
+
 //
 // Sharded key/value server.
 // Lots of replica groups, each running op-at-a-time paxos.
@@ -51,4 +53,52 @@ type GetReply struct {
 	WrongLeader bool
 	Err         Err
 	Value       string
+}
+
+type InstallShardArgs struct {
+	Data      map[string]string
+	CKid2Seq  map[int64]int64
+	Shard     int
+	ConfigNum int
+	Ckid      int64
+	Seq       int64
+}
+type InstallShardReply struct {
+	CKid2Seq    map[int64]int64
+	WrongLeader bool
+	Success     bool
+}
+type DeleteShardArgs struct {
+	Shard     int
+	ConfigNum int
+}
+type DeleteShardReply struct {
+	Success bool
+}
+
+type ExcuteInstallShardArgs struct {
+	Shard     int
+	ConfigNum int
+	CKid2Seq  map[int64]int64
+	Data      map[string]string
+}
+type ExcuteDeleteShardArgs struct {
+	Shard     int
+	ConfigNum int
+}
+type ExcuteNewConfigArgs struct {
+	Config shardmaster.Config
+}
+type ExcuteUpdateCidSeqArgs struct {
+	CKid2Seq map[int64]int64
+}
+type ExcuteGetArgs struct {
+	Shard int
+	Key   string
+	Value string
+}
+type ExcutePutAppendArgs struct {
+	Shard int
+	Key   string
+	Value string
 }
