@@ -459,7 +459,7 @@ func (kv *ShardKV) excuteNewConfig(op ExcuteNewConfigArgs) {
 				kv.db[Sid] = DeepCopyShardMap(kv.dbInstallShard[Sid][newConfig.Num])
 				for _ConfigNum, _ := range kv.dbInstallShard[Sid] {
 					if _ConfigNum <= newConfig.Num {
-						delete(kv.dbInstallShard[Sid], newConfig.Num)
+						delete(kv.dbInstallShard[Sid], _ConfigNum)
 					}
 				}
 				//kv.dbInstallShard[newConfig.Num][Sid] = make(map[string]string)
@@ -495,7 +495,7 @@ func (kv *ShardKV) excuteNewConfig(op ExcuteNewConfigArgs) {
 			delete(kv.db, Sid)
 			for _ConfigNum, _ := range kv.dbInstallShard[Sid] {
 				if _ConfigNum <= newConfig.Num {
-					delete(kv.dbInstallShard[Sid], newConfig.Num)
+					delete(kv.dbInstallShard[Sid], _ConfigNum)
 				}
 
 			}
@@ -506,7 +506,7 @@ func (kv *ShardKV) excuteNewConfig(op ExcuteNewConfigArgs) {
 		} else {
 			for _ConfigNum, _ := range kv.dbInstallShard[Sid] {
 				if _ConfigNum <= newConfig.Num {
-					delete(kv.dbInstallShard[Sid], newConfig.Num)
+					delete(kv.dbInstallShard[Sid], _ConfigNum)
 				}
 			}
 			kv.isVailedShard[Sid] = false
@@ -555,6 +555,12 @@ func DeepCopyShardMap(shardMap map[string]string) map[string]string {
 
 	return newMap
 }
+func MaxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
 func (kv *ShardKV) excuteInstallShard(op ExcuteInstallShardArgs) {
 
 	sid := op.Shard
@@ -601,7 +607,17 @@ func (kv *ShardKV) excuteInstallShard(op ExcuteInstallShardArgs) {
 		if _, success := kv.dbInstallShard[sid]; !success {
 			kv.dbInstallShard[sid] = make(map[int]map[string]string)
 		}
-		kv.dbInstallShard[sid][configNum] = DeepCopyShardMap(data)
+		maxConfig := -1
+		for _ConfigNum, _ := range kv.dbInstallShard[sid] {
+			if _ConfigNum < configNum {
+				delete(kv.dbInstallShard[sid], _ConfigNum)
+			}
+			maxConfig = MaxInt(maxConfig, _ConfigNum)
+		}
+		if maxConfig < configNum {
+			kv.dbInstallShard[sid][configNum] = DeepCopyShardMap(data)
+		}
+
 	}
 	if kv.Debug {
 		fmt.Println("==========================")
